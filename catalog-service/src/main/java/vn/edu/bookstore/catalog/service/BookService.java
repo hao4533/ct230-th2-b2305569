@@ -18,13 +18,14 @@ public class BookService {
     public BookService(BookRepository repository) {
         this.repository = repository;
     }
-    
+
     public Page<BookEntity> list(String q, Pageable pageable) {
         if (q == null || q.isBlank()) {
             return repository.findAll(pageable);
         }
         return repository.findByTitleContainingIgnoreCaseOrAuthorContainingIgnoreCase(
-                q.trim(), q.trim(), pageable);
+            q.trim(), q.trim(), pageable
+        );
     }
 
     public BookEntity get(String isbn) {

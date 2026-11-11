@@ -4,11 +4,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
-import static org.hamcrest.Matchers.containsString;
-import org.springframework.http.MediaType;
-
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -16,6 +11,22 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.MockMvc;
 import vn.edu.bookstore.catalog.TestcontainersConfig;
+
+
+import org.springframework.http.MediaType;
+
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+
+
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+
+
+import static org.hamcrest.Matchers.containsString;
+
 
 /** Kiểm thử tích hợp với PostgreSQL thật (Testcontainers) + Flyway. */
 @SpringBootTest
@@ -32,9 +43,13 @@ class BookApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.title").value("Effective Java"));
     }
+
+    // TODO(TH2-7): thêm ca kiểm thử: phân trang + sắp xếp price,desc; tìm "microservices" (3 kết quả);
+    //   size=1000 → 400; ETag + If-None-Match → 304; 404 problem; tạo (201 + Location) → trùng (409)
+    //   → PUT không If-Match (428) → PUT đúng ETag (200) → PUT ETag cũ (412) → DELETE (204).
     private static final String NEW_BOOK = """
-            {"isbn":"%s","title":"Software Architecture: The Hard Parts","author":"Neal Ford",
-            "publishedYear":2021,"price":{"amount":640000.00,"currency":"VND"}}""";
+    {"isbn":"%s","title":"Software Architecture: The Hard Parts","author":"Neal Ford",
+    "publishedYear":2021,"price":{"amount":640000.00,"currency":"VND"}}""";
 
     @Test
     void phanTrangVaSapXep() throws Exception {
@@ -68,6 +83,7 @@ class BookApiIntegrationTest {
                 .andExpect(jsonPath("$.price.amount").value(285000.00))
                 .andExpect(jsonPath("$.authorId").value(42))
                 .andReturn().getResponse().getHeader("ETag");
+
         mvc.perform(get("/api/v1/books/9780134685991").header("If-None-Match", etag))
                 .andExpect(status().isNotModified());
     }
@@ -85,37 +101,39 @@ class BookApiIntegrationTest {
     void taoCapNhatXoaVoiKhoaLacQuan() throws Exception {
         String isbn = "9781098100131";
         String etag = mvc.perform(post("/api/v1/books").contentType(MediaType.APPLICATION_JSON)
-                        .content(NEW_BOOK.formatted(isbn)))
+                .content(NEW_BOOK.formatted(isbn)))
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", containsString("/api/v1/books/" + isbn)))
                 .andReturn().getResponse().getHeader("ETag");
 
-        // trùng ISBN -> 409
+        // Thử tạo lại với cùng ISBN -> 409 Conflict
         mvc.perform(post("/api/v1/books").contentType(MediaType.APPLICATION_JSON)
-                        .content(NEW_BOOK.formatted(isbn)))
+                .content(NEW_BOOK.formatted(isbn)))
                 .andExpect(status().isConflict());
 
         String update = """
-                {"title":"Software Architecture: The Hard Parts (2nd)","author":"Neal Ford",
-                "price":{"amount":650000.00,"currency":"VND"}}""";
+            {"title":"Software Architecture: The Hard Parts (2nd)","author":"Neal Ford",
+            "price":{"amount":650000.00,"currency":"VND"}}""";
 
-        // thiếu If-Match -> 428
+        // Cập nhật không có If-Match -> 428 Precondition Required
         mvc.perform(put("/api/v1/books/" + isbn).contentType(MediaType.APPLICATION_JSON).content(update))
                 .andExpect(status().isPreconditionRequired());
 
-        // If-Match đúng -> 200, ETag mới
+        // Cập nhật với đúng If-Match -> 200 OK
         String etag2 = mvc.perform(put("/api/v1/books/" + isbn).header("If-Match", etag)
-                        .contentType(MediaType.APPLICATION_JSON).content(update))
+                .contentType(MediaType.APPLICATION_JSON).content(update))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.price.amount").value(650000.00))
                 .andReturn().getResponse().getHeader("ETag");
+
         org.assertj.core.api.Assertions.assertThat(etag2).isNotEqualTo(etag);
 
-        // ghi bằng ETag cũ -> 412 (mất cập nhật bị chặn)
+        // Cập nhật bằng ETag cũ -> 412 Precondition Failed (chống lost update)
         mvc.perform(put("/api/v1/books/" + isbn).header("If-Match", etag)
-                        .contentType(MediaType.APPLICATION_JSON).content(update))
+                .contentType(MediaType.APPLICATION_JSON).content(update))
                 .andExpect(status().isPreconditionFailed());
 
+        // Xóa sách -> 204 No Content
         mvc.perform(delete("/api/v1/books/" + isbn)).andExpect(status().isNoContent());
         mvc.perform(get("/api/v1/books/" + isbn)).andExpect(status().isNotFound());
     }
@@ -123,12 +141,9 @@ class BookApiIntegrationTest {
     @Test
     void duLieuSaiHopDongBiTuChoi() throws Exception {
         String bad = """
-                {"isbn":"123","title":"","author":"X","price":{"amount":-5,"currency":"EUR"}}""";
+            {"isbn":"123","title":"","author":"X","price":{"amount":-5,"currency":"EUR"}}""";
         mvc.perform(post("/api/v1/books").contentType(MediaType.APPLICATION_JSON).content(bad))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.type").value("https://api.bookstore.vn/problems/validation-failed"));
     }
-    // TODO(TH2-7): thêm ca kiểm thử: phân trang + sắp xếp price,desc; tìm "microservices" (3 kết quả);
-    //   size=1000 → 400; ETag + If-None-Match → 304; 404 problem; tạo (201 + Location) → trùng (409)
-    //   → PUT không If-Match (428) → PUT đúng ETag (200) → PUT ETag cũ (412) → DELETE (204).
 }
