@@ -1,0 +1,38 @@
+server:
+  port: 8081
+  shutdown: graceful
+
+spring:
+  application:
+    name: catalog-service
+  datasource:
+    url: ${CATALOG_DB_URL:jdbc:postgresql://localhost:5433/catalog}
+    username: ${CATALOG_DB_USER:catalog}
+    # Mật khẩu lab mặc định — ở môi trường thật lấy từ biến môi trường/kho bí mật
+    password: ${CATALOG_DB_PASSWORD:catalog-lab}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+  mvc:
+    problemdetails:
+      enabled: true
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    # Hiển thị đúng hợp đồng đã review (tệp static/openapi.yaml)
+    url: /openapi.yaml
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true

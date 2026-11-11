@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+    branches: [th2]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Build và kiểm thử
+        run: ./mvnw -B -pl catalog-service -am verify
+
+      - name: Lưu báo cáo kiểm thử
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: catalog-service/target/surefire-reports
